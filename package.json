@@ -1,32 +1,31 @@
 {
-	"name": "mock-debug",
-	"displayName": "Mock Debug",
-	"version": "0.27.0",
-	"publisher": "andreweinand",
-	"description": "Starter extension for developing debug adapters for VS Code.",
+	"name": "strela-intellisense",
+	"displayName": "Strela Intellisense",
+	"version": "0.0.1",
+	"publisher": "sunverwerth",
+	"description": "Provides debugging and code intelligence for strela projects.",
 	"author": {
-		"name": "Microsoft Corporation",
-		"email": "aweinand@microsoft.com"
+		"name": "Stephan Unverwerth",
+		"email": "s.unverwerth@gmx.de"
 	},
 	"license": "MIT",
 	"keywords": [
 		"multi-root ready"
 	],
 	"engines": {
-		"vscode": "^1.18.0",
+		"vscode": "^1.26.0",
 		"node": "^7.9.0"
 	},
-	"icon": "images/mock-debug-icon.png",
 	"categories": [
 		"Debuggers"
 	],
 	"private": true,
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/Microsoft/vscode-mock-debug.git"
+		"url": "https://github.com/MadHed/strela-intellisense.git"
 	},
 	"bugs": {
-		"url": "https://github.com/Microsoft/vscode-mock-debug/issues"
+		"url": "https://github.com/MadHed/strela-intellisense/issues"
 	},
 	"scripts": {
 		"prepublish": "tsc -p ./src",
@@ -40,34 +39,51 @@
 	},
 	"dependencies": {
 		"await-notify": "1.0.1",
-		"vscode-debugadapter": "1.27.0",
-		"vscode-debugprotocol": "1.27.0"
+		"mz": "^2.7.0",
+		"vscode-debugadapter": "^1.31.0",
+		"vscode-debugprotocol": "^1.31.0",
+		"vscode-languageclient": "^5.0.1"
 	},
 	"devDependencies": {
-		"@types/node": "7.0.55",
 		"@types/mocha": "2.2.48",
-		"typescript": "2.6.2",
+		"@types/mz": "0.0.32",
+		"@types/node": "7.0.55",
 		"mocha": "5.0.1",
-		"vscode": "1.1.17",
-		"vscode-debugadapter-testsupport": "1.27.0",
 		"tslint": "5.9.1",
-		"vsce": "1.37.5"
+		"typescript": "2.6.2",
+		"vsce": "1.37.5",
+		"vscode": "^1.0.0",
+		"vscode-debugadapter-testsupport": "1.27.0"
 	},
 	"main": "./out/extension",
 	"activationEvents": [
 		"onDebug",
-		"onCommand:extension.mock-debug.getProgramName"
+		"onLanguage:strela",
+		"workspaceContains:**/*.strela"
 	],
 	"contributes": {
+		"languages": [
+			{
+				"id": "strela",
+				"aliases": ["Strela"],
+				"extensions": [".strela"],
+				"configuration": "./language-configuration.json"
+			}
+		],
+        "grammars": [{
+            "language": "strela",
+            "scopeName": "text.strela",
+            "path": "./syntaxes/strela.tmLanguage"
+        }],
 		"breakpoints": [
 			{
-				"language": "markdown"
+				"language": "strela"
 			}
 		],
 		"debuggers": [
 			{
-				"type": "mock",
-				"label": "Mock Debug",
+				"type": "strela",
+				"label": "Strela Debug",
 				"program": "./out/debugAdapter.js",
 				"runtime": "node",
 				"configurationAttributes": {
@@ -78,8 +94,8 @@
 						"properties": {
 							"program": {
 								"type": "string",
-								"description": "Absolute path to a text file.",
-								"default": "${workspaceFolder}/${command:AskForProgramName}"
+								"description": "Absolute path to a source file.",
+								"default": "${file}"
 							},
 							"stopOnEntry": {
 								"type": "boolean",
@@ -90,35 +106,40 @@
 								"type": "boolean",
 								"description": "Enable logging of the Debug Adapter Protocol.",
 								"default": true
+							},
+							"args": {
+								"type": "array",
+								"description": "Additional arguments passed to the program.",
+								"items": {
+									"type": "string"
+								},
+								"default": []
 							}
 						}
 					}
 				},
 				"initialConfigurations": [
 					{
-						"type": "mock",
+						"type": "strela",
 						"request": "launch",
-						"name": "Ask for file name",
-						"program": "${workspaceFolder}/${command:AskForProgramName}",
+						"name": "Strela Debug",
+						"program": "${file}",
 						"stopOnEntry": true
 					}
 				],
 				"configurationSnippets": [
 					{
-						"label": "Mock Debug: Launch",
-						"description": "A new configuration for 'debugging' a user selected markdown file.",
+						"label": "Strela Debug: Launch",
+						"description": "A new configuration for 'debugging' a user selected strela file.",
 						"body": {
-							"type": "mock",
+							"type": "strela",
 							"request": "launch",
 							"name": "Ask for file name",
 							"program": "^\"\\${workspaceFolder}/\\${command:AskForProgramName}\"",
 							"stopOnEntry": true
 						}
 					}
-				],
-				"variables": {
-					"AskForProgramName": "extension.mock-debug.getProgramName"
-				}
+				]
 			}
 		]
 	}

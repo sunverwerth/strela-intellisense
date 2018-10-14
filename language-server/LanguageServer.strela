@@ -1,0 +1,757 @@
+module LanguageServer {
+    import Std.Collections.*;
+    import Std.IO.*;
+    import Std.Net.*;
+	import Std.JSON;
+	import Std.JSON.JsonObject;
+	import Std.JSON.JsonArray;
+	import Std.JSON.JsonValue;
+
+    import Std.Lang.Compiler.Lexer.*;
+    import Std.Lang.Compiler.Parser.*;
+    import Std.Lang.Compiler.Ast.*;
+
+	function uriToPath(uri: String): String {
+		// file:///c:/sdfdsf
+		if (uri[9] == ":") {
+			return uri.substr(8, uri.length() - 8);
+		}
+		else {
+			return uri.substr(7, uri.length() - 7);
+		}
+	}
+
+	function pathToUri(path: String): String {
+		// C:\sdfsdf\sdf
+		return "file:///" + path.replace("\\", "/");
+	}
+
+	function concat(ids: List<Identifier>, separator: String): String {
+		var num = ids.length;
+		var i: int = 0;
+		var str = "";
+		while (i < num) {
+			str = str + ids[i].token.value;
+			if (i < num - 1) {
+				str = str + separator;
+			}
+			i++;
+		}
+		return str;
+	}
+
+	function detailString(fun: FunctionDecl): String {
+		var returnType = fun.returnType;
+		var str = "function " + fun.name.token.value + "(";
+
+		var i: int = 0;
+		while (i < fun.params.length) {
+			var param = fun.params[i];
+			str = str + param.name.token.value + ": " + param._type.getName();
+			if (i < fun.params.length - 1) {
+				str = str + ", ";
+			}
+			i++;
+		}
+
+		if (returnType is null) {
+			str = str + "): void";
+		}
+		else {
+			str = str + "): " + returnType.getName();
+		}
+		return str;
+	}
+
+	function detailString(method: ClassMethodDecl): String {
+		return detailString(method.fn);
+	}
+
+	function detailString(cls: ClassDecl): String {
+		return "class " + cls.name.token.value + " {...}";
+	}
+
+	function detailString(mod: ModuleDecl): String {
+		return "module " + concat(mod.name, ".") + " {...}";
+	}
+
+	function detailString(enm: EnumDecl): String {
+		return "enum " + enm.name.token.value + " {...}";
+	}
+
+	function detailString(iface: InterfaceDecl): String {
+		return "interface " + iface.name.token.value + " {...}";
+	}
+
+	function symbolKind(node: Node): int {
+		if (node is ModuleDecl) return 2;
+		if (node is ClassDecl) return 5;
+		if (node is ClassMethodDecl) return 6;
+		if (node is ClassFieldDecl) return 8;
+		if (node is EnumDecl) return 10;
+		if (node is InterfaceDecl) return 11;
+		if (node is InterfaceMethod) return 6;
+		if (node is InterfaceField) return 8;
+		if (node is FunctionDecl) return 12;
+		if (node is VarDecl) return 13;
+		if (node is EnumElement) return 22;
+		return 0;
+	}
+
+	function completionKind(node: Node): int {
+		if (node is ModuleDecl) return 9;
+		if (node is ClassDecl) return 7;
+		if (node is ClassMethodDecl) return 2;
+		if (node is ClassFieldDecl) return 5;
+		if (node is EnumDecl) return 13;
+		if (node is InterfaceDecl) return 8;
+		if (node is InterfaceMethod) return 2;
+		if (node is InterfaceField) return 5;
+		if (node is FunctionDecl) return 3;
+		if (node is VarDecl) return 6;
+		if (node is EnumElement) return 20;
+		return 0;
+	}
+
+    class DiagnosticReporter {
+        function init() {
+            this.diagnostics = new JsonArray;
+        }
+
+        function error(file: File, row: u32, column: u32, msg: String) {
+            var diag: JsonObject = {
+                "range": {
+                    "start": {
+                        "line": row,
+                        "character": column
+                    },
+                    "end": {
+                        "line": row,
+                        "character": column
+                    }
+				},
+                "message": msg
+            };
+            this.diagnostics.append(diag);
+        }
+
+        var diagnostics: JsonArray;
+    }
+
+	/**
+	 * The main languageserver class
+	 */
+	class LanguageServer {
+        var documents: Map<String, ModuleDecl>;
+
+		function init(client: Socket) {
+            this.documents = new Map<String, ModuleDecl>;
+			this.client = client;
+		}
+
+		function run() {
+			while (this.client.isValid()) {
+				var msg = this.readMessage();
+
+				var json = JSON.parse(msg);
+				if (json is JsonObject) {
+					if (json.has("method")) {
+						var method = json["method"];
+						if (method is String){
+							var params: JsonValue = null;
+							if (json.has("params")) {
+								params = json["params"];
+							}
+							var id: float = -1.0;
+							if (json.has("id")) {
+								var _id = json["id"];
+								if (_id is float) {
+									id = _id;
+								}
+							}
+							if (id < 0) {
+								this.handleNotification(method, params);
+							}
+							else {
+								var result = this.handleRequest(method, params);
+								var answer: JsonValue = {
+									"jsonrpc": "2.0",
+									"id": id,
+									"result": result
+								};
+								var serialized = JSON.serialize(answer);
+								this.writeMessage(serialized);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		function readMessage(): String {
+			var line = this.client.readLine();
+			var length = line.substr(16, line.length() - 18).toInt();
+
+			while (line != "\r\n") {
+				line = this.client.readLine();
+			}
+			var msg = this.client.read(length);
+			print(">>> "); println(msg);
+			return msg;
+		}
+
+		function writeMessage(msg: String) {
+			print("<<< "); println(msg);
+			this.client.write("Content-Length: " + toString(msg.length()) + "\r\n");
+			this.client.write("\r\n");
+			this.client.write(msg);
+		}
+
+		function parseFile(uri: String): DiagnosticReporter {
+			var path = uriToPath(uri);
+			var diagnostics = new DiagnosticReporter;
+            var file = new File(path, "rb");
+            if (file.good()) {
+			    var parser = new Parser(new Lexer(file), diagnostics);
+			    var mod = parser.parseModule();
+			    this.documents.set(uri, mod);
+				file.close();
+            }
+            else {
+                println("Unable to open file " + path);
+            }
+			return diagnostics;
+		}
+
+		function publishDiagnostics(uri: String, diagnostics: JsonArray) {
+			var notification: JsonObject = {
+				"jsonrpc": "2.0",
+				"method": "textDocument/publishDiagnostics",
+				"params": {
+					"uri": uri,
+					"diagnostics": diagnostics
+				}
+			};
+
+			this.writeMessage(JSON.serialize(notification));
+		}
+
+		function handleNotification(method: String, params: JsonValue) {
+			if (method == "textDocument/didOpen"
+				|| method == "textDocument/didSave") {
+				if (params is JsonObject) {
+					var textDocument = params["textDocument"];
+					if (textDocument is JsonObject) {
+						var uri = textDocument["uri"];
+						if (uri is String) {
+							var diagnostics = this.parseFile(uri);
+							this.publishDiagnostics(uri, diagnostics.diagnostics);
+						}
+					}
+				}
+			}
+		}
+
+		function handleRequest(method: String, params: JsonValue): JsonValue {
+			if (method == "initialize") {
+				var result: JsonObject = {
+					"capabilities": {
+						"textDocumentSync": 2.0,
+						"hoverProvider": true,
+						"completionProvider": true,
+						"definitionProvider": true,
+						"referencesProvider": true,
+						"documentSymbolProvider": true,
+						"workspaceSymbolProvider": true
+					}
+				};
+				return result;
+			}
+			else if (method == "textDocument/hover") {
+				var result: JsonObject = {
+					"contents": "bla"
+				};
+				return result;
+			}
+			else if (method == "textDocument/completion") {
+				var result = new JsonArray;
+				if (params is JsonObject) {
+					var textDocument = params["textDocument"];
+					if (textDocument is JsonObject) {
+						var uri = textDocument["uri"];
+						if (uri is String) {
+							if (this.documents.has(uri)) {
+								var moduleNode = this.documents[uri];
+
+								var modItem: JsonObject = {
+									"label": concat(moduleNode.name, "."),
+									"kind": 9,
+									"detail": detailString(moduleNode),
+									"documentation": moduleNode.trivia
+								};
+
+								result.append(modItem);
+
+								var thisItem: JsonObject = {
+									"label": "this",
+									"kind": 14,
+									"detail": "this",
+									"documentation": "Current object context"
+								};
+								result.append(thisItem);
+
+								var i: int = 0;
+								var l = moduleNode.functions.length;
+								while(i < l) {
+									var funcNode = moduleNode.functions[i];
+									var item: JsonObject = {
+										"label": funcNode.name.token.value,
+										"kind": 3,
+										"detail": detailString(funcNode),
+										"documentation": funcNode.trivia
+									};
+									result.append(item);
+									i++;
+								}
+
+								i = 0;
+								l = moduleNode.interfaces.length;
+								while(i < l) {
+									var ifaceNode = moduleNode.interfaces[i];
+									var item: JsonObject = {
+										"label": ifaceNode.name.token.value,
+										"kind": 8,
+										"detail": detailString(ifaceNode),
+										"documentation": ifaceNode.trivia
+									};
+									result.append(item);
+									i++;
+								}
+
+								i = 0;
+								l = moduleNode.enums.length;
+								while(i < l) {
+									var enumNode = moduleNode.enums[i];
+									var item: JsonObject = {
+										"label": enumNode.name.token.value,
+										"kind": 13,
+										"detail": detailString(enumNode),
+										"documentation": enumNode.trivia
+									};
+									result.append(item);
+									i++;
+								}
+
+								i = 0;
+								l = moduleNode.classes.length;
+								while(i < l) {
+									var classNode = moduleNode.classes[i];
+									var item: JsonObject = {
+										"label": classNode.name.token.value,
+										"kind": 7,
+										"detail": detailString(classNode),
+										"documentation": classNode.trivia
+									};
+									result.append(item);
+
+									var j: int = 0;
+									var m = classNode.methods.length;
+									while (j < m) {
+										var methodNode = classNode.methods[j];
+										var item2: JsonObject = {
+											"label": methodNode.fn.name.token.value,
+											"kind": 2,
+											"detail": detailString(methodNode),
+											"documentation": methodNode.fn.trivia
+										};
+										result.append(item2);
+										j++;
+									}
+									i++;
+								}
+							}
+						}
+					}
+				}
+				return result;
+			}
+			else if (method == "textDocument/documentSymbol") {
+				var result: JsonArray = [];
+
+				if (params is JsonObject) {
+					var textDocument = params["textDocument"];
+					if (textDocument is JsonObject) {
+						var uri = textDocument["uri"];
+						if (uri is String) {
+							if (this.documents.has(uri)) {
+								var moduleNode = this.documents[uri];
+
+								var moduleMembers = new JsonArray;
+
+								var i: int = 0;
+								var length = moduleNode.functions.length;
+								while (i < length) {
+									var funcNode = moduleNode.functions[i];
+									var item: JsonValue = {
+										"name": funcNode.name.token.value,
+										"kind": symbolKind(funcNode),
+										"range": {
+											"start": {
+												"line": funcNode.start.row,
+												"character": funcNode.start.column
+											},
+											"end": {
+												"line": funcNode.end.row,
+												"character": funcNode.end.column
+											}
+										},
+										"selectionRange": {
+											"start": {
+												"line": funcNode.start.row,
+												"character": funcNode.start.column
+											},
+											"end": {
+												"line": funcNode.end.row,
+												"character": funcNode.end.column
+											}
+										}
+									};
+									moduleMembers.append(item);
+									i++;
+								}
+
+								i = 0;
+								length = moduleNode.interfaces.length;
+								while (i < length) {
+									var ifaceNode = moduleNode.interfaces[i];
+
+									var children = new JsonArray;
+									var j: int = 0;
+									while (j < ifaceNode.methods.length) {
+										var ifaceMethodNode = ifaceNode.methods[j];
+										var item: JsonValue = {
+											"name": ifaceMethodNode.name.token.value,
+											"kind": symbolKind(ifaceMethodNode),
+											"range": {
+												"start": {
+													"line": ifaceMethodNode.start.row,
+													"character": ifaceMethodNode.start.column
+												},
+												"end": {
+													"line": ifaceMethodNode.end.row,
+													"character": ifaceMethodNode.end.column
+												}
+											},
+											"selectionRange": {
+												"start": {
+													"line": ifaceMethodNode.start.row,
+													"character": ifaceMethodNode.start.column
+												},
+												"end": {
+													"line": ifaceMethodNode.end.row,
+													"character": ifaceMethodNode.end.column
+												}
+											}
+										};
+										children.append(item);
+										j++;
+									}
+
+									j = 0;
+									while (j < ifaceNode.fields.length) {
+										var ifaceFieldNode = ifaceNode.fields[j];
+										var item: JsonValue = {
+											"name": ifaceFieldNode.name.token.value,
+											"kind": symbolKind(ifaceFieldNode),
+											"range": {
+												"start": {
+													"line": ifaceFieldNode.start.row,
+													"character": ifaceFieldNode.start.column
+												},
+												"end": {
+													"line": ifaceFieldNode.end.row,
+													"character": ifaceFieldNode.end.column
+												}
+											},
+											"selectionRange": {
+												"start": {
+													"line": ifaceFieldNode.start.row,
+													"character": ifaceFieldNode.start.column
+												},
+												"end": {
+													"line": ifaceFieldNode.end.row,
+													"character": ifaceFieldNode.end.column
+												}
+											}
+										};
+										children.append(item);
+										j++;
+									}
+
+									var item: JsonValue = {
+										"name": ifaceNode.name.token.value,
+										"kind": symbolKind(ifaceNode),
+										"range": {
+											"start": {
+												"line": ifaceNode.start.row,
+												"character": ifaceNode.start.column
+											},
+											"end": {
+												"line": ifaceNode.end.row,
+												"character": ifaceNode.end.column
+											}
+										},
+										"selectionRange": {
+											"start": {
+												"line": ifaceNode.start.row,
+												"character": ifaceNode.start.column
+											},
+											"end": {
+												"line": ifaceNode.end.row,
+												"character": ifaceNode.end.column
+											}
+										},
+										"children": children
+									};
+									moduleMembers.append(item);
+									i++;
+								}
+
+								i = 0;
+								length = moduleNode.enums.length;
+								while (i < length) {
+									var enumNode = moduleNode.enums[i];
+									var children = new JsonArray;
+
+									var j: int = 0;
+									while (j < enumNode.elements.length) {
+										var enumElementNode = enumNode.elements[j];
+										var item: JsonValue = {
+											"name": enumElementNode.name.token.value,
+											"kind": symbolKind(enumElementNode),
+											"range": {
+												"start": {
+													"line": enumElementNode.start.row,
+													"character": enumElementNode.start.column
+												},
+												"end": {
+													"line": enumElementNode.end.row,
+													"character": enumElementNode.end.column
+												}
+											},
+											"selectionRange": {
+												"start": {
+													"line": enumElementNode.start.row,
+													"character": enumElementNode.start.column
+												},
+												"end": {
+													"line": enumElementNode.end.row,
+													"character": enumElementNode.end.column
+												}
+											}
+										};
+										children.append(item);
+										j++;
+									}
+
+									var item: JsonValue = {
+										"name": enumNode.name.token.value,
+										"kind": symbolKind(enumNode),
+										"range": {
+											"start": {
+												"line": enumNode.start.row,
+												"character": enumNode.start.column
+											},
+											"end": {
+												"line": enumNode.end.row,
+												"character": enumNode.end.column
+											}
+										},
+										"selectionRange": {
+											"start": {
+												"line": enumNode.start.row,
+												"character": enumNode.start.column
+											},
+											"end": {
+												"line": enumNode.end.row,
+												"character": enumNode.end.column
+											}
+										},
+										"children": children
+									};
+									moduleMembers.append(item);
+									i++;
+								}
+
+								i = 0;
+								length = moduleNode.classes.length;
+								while (i < length) {
+									var classNode = moduleNode.classes[i];
+
+									var children = new JsonArray;
+
+									var j: int = 0;
+									while (j < classNode.methods.length) {
+										var methodNode = classNode.methods[j];
+										var item: JsonValue = {
+											"name": methodNode.fn.name.token.value,
+											"kind": symbolKind(methodNode),
+											"range": {
+												"start": {
+													"line": methodNode.fn.start.row,
+													"character": methodNode.fn.start.column
+												},
+												"end": {
+													"line": methodNode.fn.end.row,
+													"character": methodNode.fn.end.column
+												}
+											},
+											"selectionRange": {
+												"start": {
+													"line": methodNode.fn.start.row,
+													"character": methodNode.fn.start.column
+												},
+												"end": {
+													"line": methodNode.fn.end.row,
+													"character": methodNode.fn.end.column
+												}
+											}
+										};
+										children.append(item);
+										j++;
+									}
+
+									j = 0;
+									while (j < classNode.fields.length) {
+										var fieldNode = classNode.fields[j];
+										var item: JsonValue = {
+											"name": fieldNode.variable.name.token.value,
+											"kind": symbolKind(fieldNode),
+											"range": {
+												"start": {
+													"line": fieldNode.variable.start.row,
+													"character": fieldNode.variable.start.column
+												},
+												"end": {
+													"line": fieldNode.variable.end.row,
+													"character": fieldNode.variable.end.column
+												}
+											},
+											"selectionRange": {
+												"start": {
+													"line": fieldNode.variable.start.row,
+													"character": fieldNode.variable.start.column
+												},
+												"end": {
+													"line": fieldNode.variable.end.row,
+													"character": fieldNode.variable.end.column
+												}
+											}
+										};
+										children.append(item);
+										j++;
+									}
+
+									var cls: JsonValue = {
+										"name": classNode.name.token.value,
+										"kind": symbolKind(classNode),
+										"range": {
+											"start": {
+												"line": classNode.start.row,
+												"character": classNode.start.column
+											},
+											"end": {
+												"line": classNode.end.row,
+												"character": classNode.end.column
+											}
+										},
+										"selectionRange": {
+											"start": {
+												"line": classNode.start.row,
+												"character": classNode.start.column
+											},
+											"end": {
+												"line": classNode.end.row,
+												"character": classNode.end.column
+											}
+										},
+										"children": children
+									};
+
+									moduleMembers.append(cls);
+									i++;
+								}
+
+								var _module: JsonValue = {
+									"name": concat(moduleNode.name, "."),
+									"kind": symbolKind(moduleNode),
+									"range": {
+										"start": {
+											"line": moduleNode.start.row,
+											"character": moduleNode.start.column
+										},
+										"end": {
+											"line": moduleNode.end.row,
+											"character": moduleNode.end.column
+										}
+									},
+									"selectionRange": {
+										"start": {
+											"line": moduleNode.start.row,
+											"character": moduleNode.start.column
+										},
+										"end": {
+											"line": moduleNode.end.row,
+											"character": moduleNode.end.column
+										}
+									},
+									"children": moduleMembers
+								};
+
+								result.append(_module);
+							}
+						}
+					}
+				}
+
+				return result;
+			}
+
+			var result: JsonValue = null;
+			return result;
+		}
+
+		var client: Socket;
+	}
+
+	/**
+	 * Entry point for language server
+	 * args: Command line arguments, port is first
+	 * returns: 0 on success nonzero otherwise
+	 */
+    function main(args: String[]): int {
+        var port: int = 31337;
+
+		if (args.length > 0) {
+	        port = args[0].toInt();
+		}
+
+        println("Welcome to Strela Language Server v0.1");
+        println("Connecting back to client...");
+		println("Port " + toString(port));
+
+		var client = new Socket();
+        if (client.connect(new IPAddr(127, 0, 0, 1).toInt(), port) < 0) {
+			println("Error");
+			return 1;
+		}
+        println("Connected!");
+
+		var server = new LanguageServer(client);
+		server.run();
+
+		println("Goodbye!");
+
+        return 0;
+    }
+}

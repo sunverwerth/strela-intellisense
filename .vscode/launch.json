@@ -37,10 +37,10 @@
 			"internalConsoleOptions": "openOnSessionStart"
 		},
 		{
-			"type": "mock",
+			"type": "strela",
 			"request": "launch",
-			"name": "Mock Sample",
-			"program": "${workspaceFolder}/${command:AskForProgramName}",
+			"name": "Strela Sample",
+			"program": "${file}",
 			"stopOnEntry": true
 		}
 	],

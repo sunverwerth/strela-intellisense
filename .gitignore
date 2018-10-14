@@ -2,5 +2,6 @@
 node_modules/
 out/
 npm-debug.log
-mock-debug.txt
+strela-debug.txt
 *.vsix
+package-lock.json
