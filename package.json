@@ -65,16 +65,22 @@
 		"languages": [
 			{
 				"id": "strela",
-				"aliases": ["Strela"],
-				"extensions": [".strela"],
+				"aliases": [
+					"Strela"
+				],
+				"extensions": [
+					".strela"
+				],
 				"configuration": "./language-configuration.json"
 			}
 		],
-        "grammars": [{
-            "language": "strela",
-            "scopeName": "text.strela",
-            "path": "./syntaxes/strela.tmLanguage"
-        }],
+		"grammars": [
+			{
+				"language": "strela",
+				"scopeName": "text.strela",
+				"path": "./syntaxes/strela.tmLanguage"
+			}
+		],
 		"breakpoints": [
 			{
 				"language": "strela"

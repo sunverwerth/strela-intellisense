@@ -45,7 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
 			// The server is implemented in strela
 			let port = server.address().port.toString();
 			console.log(port);
-            const childProcess = spawn('strela', [
+            /*const childProcess = spawn('strela', [
 				context.asAbsolutePath('language-server/LanguageServer.strela'),
                 port
             ], {
@@ -59,7 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
 			childProcess.on('exit', function (code) {
 				console.log('LSP process exited with code ' + code.toString());
 			});
-            return childProcess;
+            return childProcess;*/
         });
     });
 
