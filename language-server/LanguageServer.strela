@@ -12,9 +12,6 @@ module LanguageServer {
     import Std.Lang.Compiler.Parser.*;
     import Std.Lang.Compiler.Ast.*;
 
-	/**
-	 * TRIVIA
-	 */
 	function cleanupTrivia(trivia: String): String {
 		var lines = trivia.split("\n");
 		var cleanLines = new List<String>;
@@ -65,9 +62,8 @@ module LanguageServer {
 		return str;
 	}
 
-	function detailString(fun: FunctionDecl): String {
-		var returnType = fun.returnType;
-		var str = cleanupTrivia(fun.trivia) + "function " + fun.getName() + "(";
+	function signatureString(fun: FunctionDecl): String {
+		var str = "(";
 
 		var i: int = 0;
 		while (i < fun.params.length) {
@@ -79,13 +75,48 @@ module LanguageServer {
 			i++;
 		}
 
+		var returnType = fun.returnType;
 		if (returnType is null) {
 			str = str + "): void";
 		}
 		else {
 			str = str + "): " + returnType.getName();
 		}
+
 		return str;
+	}
+
+	function signatureString(fun: InterfaceMethod): String {
+		var str = "(";
+
+		var i: int = 0;
+		while (i < fun.params.length) {
+			var param = fun.params[i];
+			str = str + param.name.token.value + ": " + param._type.getName();
+			if (i < fun.params.length - 1) {
+				str = str + ", ";
+			}
+			i++;
+		}
+
+		var returnType = fun.returnType;
+		if (returnType is null) {
+			str = str + "): void";
+		}
+		else {
+			str = str + "): " + returnType.getName();
+		}
+
+		return str;
+	}
+
+	function detailString(fun: FunctionDecl): String {
+		var str = cleanupTrivia(fun.trivia) + "function " + fun.getName() + signatureString(fun);
+		return str;
+	}
+
+	function detailString(fun: FunctionDecl): String {
+		return cleanupTrivia(fun.trivia) + "function " + fun.getName() + signatureString(fun);
 	}
 
 	function detailString(method: ClassMethodDecl): String {
@@ -308,9 +339,6 @@ module LanguageServer {
 			}
 		}
 
-		/**
-		 * TRIVIA
-		 */
 		function handleRequest(method: String, params: JsonValue): JsonValue {
 			var qry = new JsonQuery(params);
 
@@ -467,7 +495,7 @@ module LanguageServer {
 					while (i < length) {
 						var funcNode = moduleNode.functions[i];
 						var item: JsonValue = {
-							"name": funcNode.getName(),
+							"name": funcNode.getName() + signatureString(funcNode),
 							"kind": symbolKind(funcNode),
 							"range": {
 								"start": {
@@ -504,7 +532,7 @@ module LanguageServer {
 						while (j < ifaceNode.methods.length) {
 							var ifaceMethodNode = ifaceNode.methods[j];
 							var item: JsonValue = {
-								"name": ifaceMethodNode.name.token.value,
+								"name": ifaceMethodNode.name.token.value + signatureString(ifaceMethodNode),
 								"kind": symbolKind(ifaceMethodNode),
 								"range": {
 									"start": {
@@ -668,7 +696,7 @@ module LanguageServer {
 						while (j < classNode.methods.length) {
 							var methodNode = classNode.methods[j];
 							var item: JsonValue = {
-								"name": methodNode.fn.getName(),
+								"name": methodNode.fn.getName() + signatureString(methodNode.fn),
 								"kind": symbolKind(methodNode),
 								"range": {
 									"start": {
